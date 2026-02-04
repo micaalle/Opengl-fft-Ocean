@@ -51,7 +51,6 @@ vec3 displacedPos(vec2 worldXZ){
     float dx = sampleTile(1, uv).x * uChoppy;
     float dz = sampleTile(2, uv).x * uChoppy;
 
-    // NEW: add long swells to height (continuous across world)
     h += swell(worldXZ) * uSwellAmp;
 
     return vec3(worldXZ.x - dx, h, worldXZ.y - dz);
