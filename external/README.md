@@ -1,1 +1,1 @@
-Liscences for software used
+Licenses for software used
