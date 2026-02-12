@@ -24,6 +24,7 @@ namespace fs = std::filesystem;
 // -----------------------------
 // Camera globals
 // -----------------------------
+
 glm::vec3 cameraPos = glm::vec3(0.0f, 1.5f, 5.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -37,22 +38,32 @@ float fov = 45.0f;
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
-// parms for live tweaks 
+
 float gHeightScale = 14.0f;
 float gChoppy = 6.0f;
 float gSwellAmp = 1.5f;
 float gSwellSpeed = 0.25f;
 
-// Day/night toggle : kinda redundent now that ive added the skybox
-float dayNight = 0.0f;
+// Day/night toggle : kinda redundent now that ive added the skybox 
+float dayNight = 1.0f; // start dark because the light looks weird maybe add more colors or something
+bool wireframe = false;
+int shaderDebug = 0;
 
-bool wireframe = true;
+bool infiniteOcean = true;
+int oceanRadius = 3;
 
-int shaderDebug = 0; // 1 is still super scuffed FIX
+float cameraSpeedBase = 10.0f;
 
-// NEW: Infinite ocean toggle (P)
-bool infiniteOcean = true; // true = tiled grid, false = single patch
-int oceanRadius = 3;       // R=3 => 7x7 patches
+struct MeshVert
+{
+    float xz[2];
+    float uv[2];
+};
+glm::vec2 worldOrigin(0.0f, 0.0f);
+
+float gExposure = 1.05f;     
+float gBloomStrength = 0.85f; 
+
 
 std::string readFile(const std::string &path)
 {
@@ -120,11 +131,22 @@ static void requireNonEmpty(const std::string &src, const char *name, const std:
     }
 }
 
+static void printWaveParams()
+{
+    std::cout << "Wave params: height=" << gHeightScale
+              << "  choppy=" << gChoppy
+              << "  swellAmp=" << gSwellAmp
+              << "  swellSpeed=" << gSwellSpeed
+              << "  exposure=" << gExposure
+              << "  bloom=" << gBloomStrength
+              << "\n";
+}
 
 void mouse_callback(GLFWwindow *window, double xpos, double ypos)
 {
     (void)window;
     float sensitivity = 0.1f;
+
     if (firstMouse)
     {
         lastX = (float)xpos;
@@ -143,28 +165,13 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos)
     yaw += xoffset;
     pitch += yoffset;
 
-    if (pitch > 89.0f)
-        pitch = 89.0f;
-    if (pitch < -89.0f)
-        pitch = -89.0f;
+    pitch = std::clamp(pitch, -89.0f, 89.0f);
 
     glm::vec3 front;
     front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
     front.y = sin(glm::radians(pitch));
     front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
     cameraFront = glm::normalize(front);
-}
-
-float cameraSpeedBase = 10.0f; 
-
-static void printWaveParams()
-{
-    std::cout
-        << "Wave params: height=" << gHeightScale
-        << "  choppy=" << gChoppy
-        << "  swellAmp=" << gSwellAmp
-        << "  swellSpeed=" << gSwellSpeed
-        << "\n";
 }
 
 void processInput(GLFWwindow *window, float dt)
@@ -182,7 +189,7 @@ void processInput(GLFWwindow *window, float dt)
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * speed;
 
-    static bool nPressed = false;
+    static bool nPressed = true;
     if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS)
     {
         if (!nPressed)
@@ -219,7 +226,6 @@ void processInput(GLFWwindow *window, float dt)
     else
         pPressed = false;
 
-    // still kinda broken but i like the green
     static bool d0 = false, d1 = false, d2 = false;
     if (glfwGetKey(window, GLFW_KEY_0) == GLFW_PRESS)
     {
@@ -252,11 +258,12 @@ void processInput(GLFWwindow *window, float dt)
     else
         d2 = false;
 
-
     static float keyRepeat = 0.0f;
     keyRepeat -= dt;
 
-    // maybe add limits to height idk 
+    // ADD height limits or maybe fix the shading of the depth layer so when the waves get high theyre not super colorful might look fine with some foam 
+    // check shaderlab for help maybe idk
+
     if (keyRepeat <= 0.0f)
     {
         bool changed = false;
@@ -305,22 +312,35 @@ void processInput(GLFWwindow *window, float dt)
             changed = true;
         }
 
+        // debug bloom test controls, dont really work that well 
+        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS)
+        {
+            gExposure = std::min(2.0f, gExposure + 0.03f);
+            changed = true;
+        }
+        if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS)
+        {
+            gExposure = std::max(0.2f, gExposure - 0.03f);
+            changed = true;
+        }
+        if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS)
+        {
+            gBloomStrength = std::min(2.0f, gBloomStrength + 0.05f);
+            changed = true;
+        }
+        if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)
+        {
+            gBloomStrength = std::max(0.0f, gBloomStrength - 0.05f);
+            changed = true;
+        }
+
         if (changed)
         {
             printWaveParams();
-            keyRepeat = 0.05f; 
+            keyRepeat = 0.05f;
         }
     }
 }
-
-struct MeshVert
-{
-    float xz[2];
-    float uv[2];
-};
-
-
-glm::vec2 worldOrigin(0.0f, 0.0f);
 
 GLuint loadHDRTexture2D(const std::string &path, int &outW, int &outH)
 {
@@ -336,12 +356,10 @@ GLuint loadHDRTexture2D(const std::string &path, int &outW, int &outH)
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, outW, outH, 0, GL_RGB, GL_FLOAT, data);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
@@ -359,9 +377,8 @@ static GLuint createCubemapFromEquirect(GLuint hdrEquirectTex, int cubeSize, GLu
     glGenTextures(1, &envCubemap);
     glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
     for (int i = 0; i < 6; ++i)
-    {
         glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, cubeSize, cubeSize, 0, GL_RGB, GL_FLOAT, nullptr);
-    }
+
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -410,6 +427,33 @@ static GLuint createCubemapFromEquirect(GLuint hdrEquirectTex, int cubeSize, GLu
     return envCubemap;
 }
 
+// ------------------------------------------------------------
+
+static GLuint makeColorTex(int w, int h)
+{
+    GLuint t = 0;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return t;
+}
+
+static bool checkFBO(const char *name)
+{
+    GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (st != GL_FRAMEBUFFER_COMPLETE)
+    {
+        std::cerr << "FBO " << name << " incomplete: 0x" << std::hex << st << std::dec << "\n";
+        return false;
+    }
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     fs::path exeDir = fs::absolute(argv[0]).parent_path();
@@ -422,6 +466,7 @@ int main(int argc, char **argv)
         std::cerr << "GLFW init failed\n";
         return -1;
     }
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -430,6 +475,7 @@ int main(int argc, char **argv)
     if (!window)
     {
         std::cerr << "Window creation failed\n";
+        glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
@@ -441,6 +487,7 @@ int main(int argc, char **argv)
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
         std::cerr << "Failed to init GLAD\n";
+        glfwTerminate();
         return -1;
     }
 
@@ -458,6 +505,7 @@ int main(int argc, char **argv)
         -1.f, 1.f, 0.f, 1.f,
         1.f, -1.f, 1.f, 0.f,
         1.f, 1.f, 1.f, 1.f};
+
     GLuint quadVAO, quadVBO;
     glGenVertexArrays(1, &quadVAO);
     glGenBuffers(1, &quadVBO);
@@ -470,7 +518,7 @@ int main(int argc, char **argv)
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
     glBindVertexArray(0);
 
-
+    // water mesh
     const int GRID_N = 256;
     const float PATCH_SIZE = 512.0f;
 
@@ -526,7 +574,6 @@ int main(int argc, char **argv)
     glBindVertexArray(waterVAO);
     glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(verts.size() * sizeof(MeshVert)), verts.data(), GL_STATIC_DRAW);
-
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(indices.size() * sizeof(uint32_t)), indices.data(), GL_STATIC_DRAW);
 
@@ -536,6 +583,7 @@ int main(int argc, char **argv)
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVert), (void *)offsetof(MeshVert, uv));
     glBindVertexArray(0);
 
+    // skybox cube
     float cubeVerts[] = {
         -1, -1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, -1, 1, -1, -1, -1, -1,
         -1, -1, 1, 1, -1, 1, 1, 1, 1, 1, 1, 1, -1, 1, 1, -1, -1, 1,
@@ -554,37 +602,52 @@ int main(int argc, char **argv)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
     glBindVertexArray(0);
 
-    // probably should make cmake put the shaders in the Release but dragging in for now works
     auto sp = [&](const char *name)
     { return (shadersDir / name).string(); };
 
     std::string fullscreen_vs = readFile(sp("fullscreen_quad.vs"));
     std::string bufferA_fs = readFile(sp("fft_init.glsl"));
     std::string bufferB_fs = readFile(sp("fft_process.glsl"));
+
     std::string water_vs = readFile(sp("water_mesh.vs"));
     std::string water_fs = readFile(sp("water_mesh.fs"));
 
     std::string skybox_vs = readFile(sp("skybox.vs"));
     std::string skybox_fs = readFile(sp("skybox.fs"));
+
     std::string capture_vs = readFile(sp("cube_capture.vs"));
     std::string eq2cube_fs = readFile(sp("equirect_to_cubemap.fs"));
+
+    std::string bright_fs = readFile(sp("post_bright.fs"));
+    std::string blur_fs = readFile(sp("post_blur.fs"));
+    std::string composite_fs = readFile(sp("post_composite.fs"));
 
     requireNonEmpty(fullscreen_vs, "fullscreen_quad.vs", sp("fullscreen_quad.vs"));
     requireNonEmpty(bufferA_fs, "fft_init.glsl", sp("fft_init.glsl"));
     requireNonEmpty(bufferB_fs, "fft_process.glsl", sp("fft_process.glsl"));
+
     requireNonEmpty(water_vs, "water_mesh.vs", sp("water_mesh.vs"));
     requireNonEmpty(water_fs, "water_mesh.fs", sp("water_mesh.fs"));
 
     requireNonEmpty(skybox_vs, "skybox.vs", sp("skybox.vs"));
     requireNonEmpty(skybox_fs, "skybox.fs", sp("skybox.fs"));
+
     requireNonEmpty(capture_vs, "cube_capture.vs", sp("cube_capture.vs"));
     requireNonEmpty(eq2cube_fs, "equirect_to_cubemap.fs", sp("equirect_to_cubemap.fs"));
+
+    requireNonEmpty(bright_fs, "post_bright.fs", sp("post_bright.fs"));
+    requireNonEmpty(blur_fs, "post_blur.fs", sp("post_blur.fs"));
+    requireNonEmpty(composite_fs, "post_composite.fs", sp("post_composite.fs"));
 
     GLuint progA = createProgram(fullscreen_vs, bufferA_fs, "FFT Init (A)");
     GLuint progB = createProgram(fullscreen_vs, bufferB_fs, "FFT Process (B)");
     GLuint progWater = createProgram(water_vs, water_fs, "Water Mesh");
     GLuint progSkybox = createProgram(skybox_vs, skybox_fs, "Skybox");
     GLuint progEq2Cube = createProgram(capture_vs, eq2cube_fs, "Equirect->Cubemap");
+
+    GLuint progBright = createProgram(fullscreen_vs, bright_fs, "Bright Extract");
+    GLuint progBlur = createProgram(fullscreen_vs, blur_fs, "Bloom Blur");
+    GLuint progComp = createProgram(fullscreen_vs, composite_fs, "Composite");
 
     const int FREQ_SIZE = 256;
 
@@ -607,6 +670,7 @@ int main(int argc, char **argv)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     GLuint fboA, fboB[2];
     glGenFramebuffers(1, &fboA);
@@ -637,11 +701,7 @@ int main(int argc, char **argv)
     GLuint hdrTex = loadHDRTexture2D(sp("sky.hdr"), hdrW, hdrH);
     float envMaxMip = 0.0f;
 
-    if (!hdrTex)
-    {
-        std::cerr << "HDR missing from build/Release \n";
-    }
-    else
+    if (hdrTex)
     {
         glBindTexture(GL_TEXTURE_2D, hdrTex);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -657,7 +717,10 @@ int main(int argc, char **argv)
         glBindTexture(GL_TEXTURE_2D, 0);
         std::cout << "HDR mipmaps generated. uEnvMaxMip = " << envMaxMip << "\n";
     }
-
+    else
+    {
+        std::cerr << "HDR missing: " << sp("sky.hdr") << "\n";
+    }
 
     GLuint captureFBO = 0, captureRBO = 0;
     glGenFramebuffers(1, &captureFBO);
@@ -665,15 +728,73 @@ int main(int argc, char **argv)
 
     GLuint envCube = 0;
     if (hdrTex)
-    {
         envCube = createCubemapFromEquirect(hdrTex, 512, progEq2Cube, cubeVAO, captureFBO, captureRBO);
-    }
+
+    GLuint sceneFBO = 0, sceneTex = 0, sceneDepth = 0;
+    glGenFramebuffers(1, &sceneFBO);
+
+    auto rebuildSceneFBO = [&](int w, int h)
+    {
+        if (sceneTex)
+            glDeleteTextures(1, &sceneTex);
+        if (sceneDepth)
+            glDeleteRenderbuffers(1, &sceneDepth);
+
+        sceneTex = makeColorTex(w, h);
+
+        glGenRenderbuffers(1, &sceneDepth);
+        glBindRenderbuffer(GL_RENDERBUFFER, sceneDepth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneTex, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepth);
+
+        checkFBO("sceneFBO");
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    };
+
+    GLuint brightFBO = 0, brightTex = 0;
+    GLuint pingFBO[2] = {0, 0}, pingTex[2] = {0, 0};
+
+    int bloomW = std::max(1, width / 2);
+    int bloomH = std::max(1, height / 2);
+
+    auto rebuildBloom = [&](int w, int h)
+    {
+        bloomW = std::max(1, w / 2);
+        bloomH = std::max(1, h / 2);
+
+        if (!brightFBO)
+            glGenFramebuffers(1, &brightFBO);
+        if (brightTex)
+            glDeleteTextures(1, &brightTex);
+        brightTex = makeColorTex(bloomW, bloomH);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, brightFBO);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, brightTex, 0);
+        checkFBO("brightFBO");
+
+        if (!pingFBO[0])
+            glGenFramebuffers(2, pingFBO);
+        for (int i = 0; i < 2; i++)
+        {
+            if (pingTex[i])
+                glDeleteTextures(1, &pingTex[i]);
+            pingTex[i] = makeColorTex(bloomW, bloomH);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, pingFBO[i]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pingTex[i], 0);
+            checkFBO(i == 0 ? "ping0" : "ping1");
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    };
+
+    rebuildSceneFBO(width, height);
+    rebuildBloom(width, height);
 
     float time = 0.0f;
     float dbgTimer = 0.0f;
-
-    const float SWELL_AMP = 1.5f;
-    const float SWELL_SPEED = 0.25f;
 
     while (!glfwWindowShouldClose(window))
     {
@@ -686,7 +807,7 @@ int main(int argc, char **argv)
 
         time += deltaTime * 0.4f;
 
-        //buffer A
+        // pass strt
         glBindFramebuffer(GL_FRAMEBUFFER, fboA);
         glViewport(0, 0, FREQ_SIZE, FREQ_SIZE);
         glUseProgram(progA);
@@ -695,7 +816,6 @@ int main(int argc, char **argv)
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // buffer b
         glUseProgram(progB);
         glUniform2f(glGetUniformLocation(progB, "iResolution"), (float)(3 * FREQ_SIZE), (float)FREQ_SIZE);
 
@@ -726,38 +846,34 @@ int main(int argc, char **argv)
         glUniform1i(glGetUniformLocation(progB, "uPass"), 1);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // i originally had this because my plane was completely flat but i like it so im going to keep it
-        // if for some reason you are testing this code just comment this out and you wont be spammed 
         dbgTimer += deltaTime;
         if (dbgTimer > 1.0f)
         {
             dbgTimer = 0.0f;
-
             glBindFramebuffer(GL_FRAMEBUFFER, fboB[FINAL_B]);
-            auto read = [&](int x, int y)
-            {
-                float p[4] = {0, 0, 0, 0};
-                glReadPixels(x, y, 1, 1, GL_RGBA, GL_FLOAT, p);
-                return std::array<float, 4>{p[0], p[1], p[2], p[3]};
-            };
-
-            auto hcc = read(FREQ_SIZE / 2, FREQ_SIZE / 2);
-            auto dxcc = read(FREQ_SIZE + FREQ_SIZE / 2, FREQ_SIZE / 2);
-            auto dzcc = read(2 * FREQ_SIZE + FREQ_SIZE / 2, FREQ_SIZE / 2);
+            float p[4] = {0, 0, 0, 0};
+            glReadPixels(FREQ_SIZE / 2, FREQ_SIZE / 2, 1, 1, GL_RGBA, GL_FLOAT, p);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-            std::cout << "FFT H(C,C)  = " << hcc[0] << "  DX=" << dxcc[0] << "  DZ=" << dzcc[0] << "\n";
+            std::cout << "FFT H(C,C)=" << p[0] << "\n";
         }
 
-        
+        int newW, newH;
+        glfwGetFramebufferSize(window, &newW, &newH);
+        if (newW != width || newH != height)
+        {
+            width = newW;
+            height = newH;
+            glViewport(0, 0, width, height);
+        }
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glfwGetFramebufferSize(window, &width, &height);
         glViewport(0, 0, width, height);
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+
         glClearColor(0.02f, 0.03f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
-        glm::mat4 proj = glm::perspective(glm::radians(fov), (float)width / (float)height, 0.01f, 2000.0f);
 
         glm::vec2 camXZ(cameraPos.x, cameraPos.z);
         glm::vec2 snap = glm::floor(camXZ / PATCH_SIZE) * PATCH_SIZE;
@@ -768,7 +884,9 @@ int main(int argc, char **argv)
             worldOrigin += snap;
         }
 
-        // water startt
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+        glm::mat4 proj = glm::perspective(glm::radians(fov), (float)width / (float)height, 0.01f, 2000.0f);
+
         glUseProgram(progWater);
 
         glActiveTexture(GL_TEXTURE0);
@@ -787,17 +905,10 @@ int main(int argc, char **argv)
         glUniform1f(glGetUniformLocation(progWater, "uDayNight"), dayNight);
 
         glUniform1f(glGetUniformLocation(progWater, "uPatchSize"), PATCH_SIZE);
-
         glUniform1f(glGetUniformLocation(progWater, "uHeightScale"), gHeightScale);
         glUniform1f(glGetUniformLocation(progWater, "uChoppy"), gChoppy);
-        
-        // swells
-        GLint locSwellAmp = glGetUniformLocation(progWater, "uSwellAmp");
-        if (locSwellAmp >= 0)
-            glUniform1f(locSwellAmp, SWELL_AMP);
-        GLint locSwellSpeed = glGetUniformLocation(progWater, "uSwellSpeed");
-        if (locSwellSpeed >= 0)
-            glUniform1f(locSwellSpeed, SWELL_SPEED);
+        glUniform1f(glGetUniformLocation(progWater, "uSwellAmp"), gSwellAmp);
+        glUniform1f(glGetUniformLocation(progWater, "uSwellSpeed"), gSwellSpeed);
 
         GLint locDbg = glGetUniformLocation(progWater, "uDebug");
         if (locDbg >= 0)
@@ -805,7 +916,7 @@ int main(int argc, char **argv)
 
         GLint locExp = glGetUniformLocation(progWater, "uEnvExposure");
         if (locExp >= 0)
-            glUniform1f(locExp, 0.6f);
+            glUniform1f(locExp, 0.55f);
 
         GLint locMip = glGetUniformLocation(progWater, "uEnvMaxMip");
         if (locMip >= 0)
@@ -837,16 +948,13 @@ int main(int argc, char **argv)
         glBindVertexArray(0);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
-        // sky box idk if i like the hdr maybe change later
+        // skybox stuff
         if (envCube)
         {
             glDepthFunc(GL_LEQUAL);
             glDepthMask(GL_FALSE);
 
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
             glUseProgram(progSkybox);
-
             glm::mat4 viewNoTrans = glm::mat4(glm::mat3(view));
             glUniformMatrix4fv(glGetUniformLocation(progSkybox, "uViewNoTrans"), 1, GL_FALSE, glm::value_ptr(viewNoTrans));
             glUniformMatrix4fv(glGetUniformLocation(progSkybox, "uProj"), 1, GL_FALSE, glm::value_ptr(proj));
@@ -854,7 +962,7 @@ int main(int argc, char **argv)
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_CUBE_MAP, envCube);
             glUniform1i(glGetUniformLocation(progSkybox, "uEnv"), 0);
-            glUniform1f(glGetUniformLocation(progSkybox, "uExposure"), 0.8f);
+            glUniform1f(glGetUniformLocation(progSkybox, "uExposure"), 0.95f);
 
             glBindVertexArray(cubeVAO);
             glDrawArrays(GL_TRIANGLES, 0, 36);
