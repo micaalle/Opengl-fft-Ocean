@@ -6,24 +6,27 @@ layout(location=1) in vec2 aUV;
 uniform mat4 uView;
 uniform mat4 uProj;
 
-uniform sampler2D uFFT;   
+uniform sampler2D uFFT;
 uniform float uPatchSize;
 uniform vec2  uWorldOffset;
 uniform float uHeightScale;
 uniform float uChoppy;
 uniform float uTime;
 
-uniform float uSwellAmp;     
-uniform float uSwellSpeed;   
+uniform float uSwellAmp;
+uniform float uSwellSpeed;
 
-out vec3 vWorldPos;
-out vec3 vNormal;
-out vec2 vWorldXZ;
+out vec3  vWorldPos;
+out vec3  vNormal;
+out vec2  vWorldXZ;
+out float vCrest;   
+out float vBreak;   
+out float vCurv;    
 
 #define FREQ_SIZE 256
 #define PI 3.14159265359
 
-vec2 sampleTile(int tile, vec2 uv01) {
+vec2 sampleTileNearest(int tile, vec2 uv01) {
     uv01 = fract(uv01);
     ivec2 t = ivec2(int(uv01.x * float(FREQ_SIZE)),
                     int(uv01.y * float(FREQ_SIZE)));
@@ -32,31 +35,60 @@ vec2 sampleTile(int tile, vec2 uv01) {
     return texelFetch(uFFT, t, 0).xy;
 }
 
-// help normalize across tiles 
-float swell(vec2 w)
+struct SwellOut { float h; vec2 d; };
+
+SwellOut gerstner(vec2 xz, vec2 dir, float amp, float wl, float spd, float chop)
 {
-    float t = uTime * uSwellSpeed;
+    dir = normalize(dir);
+    float k = 2.0 * PI / max(wl, 1e-3);
+    float w = spd * k;
+    float ph = k * dot(dir, xz) + uTime * w;
+    float s = sin(ph);
+    float c = cos(ph);
 
-    float s1 = sin(dot(w, normalize(vec2(1.0, 0.2))) * 0.0040 + t * 1.2);
-    float s2 = sin(dot(w, normalize(vec2(-0.3, 1.0))) * 0.0025 + t * 0.9);
-    float s3 = sin(dot(w, normalize(vec2(0.7, -0.7))) * 0.0016 + t * 0.6);
-
-    return (s1 * 0.55 + s2 * 0.35 + s3 * 0.25);
+    SwellOut o;
+    o.h = amp * s;
+    o.d = dir * (amp * chop * c);
+    return o;
 }
 
-vec3 displacedPos(vec2 worldXZ){
+SwellOut swellField(vec2 xz)
+{
+    float A = uSwellAmp;
+    float S = uSwellSpeed;
+
+    SwellOut a = gerstner(xz, vec2( 1.0,  0.25), 1.15*A, 260.0, 0.85*S, 0.75);
+    SwellOut b = gerstner(xz, vec2( 0.6,  1.00), 0.85*A, 180.0, 1.05*S, 0.70);
+    SwellOut c = gerstner(xz, vec2(-0.25, 1.0), 0.55*A, 120.0, 1.25*S, 0.65);
+    SwellOut d = gerstner(xz, vec2( 0.9, -0.7), 0.35*A,  70.0, 1.55*S, 0.55);
+
+    SwellOut o;
+    o.h = a.h + b.h + c.h + d.h;
+    o.d = a.d + b.d + c.d + d.d;
+
+    return o;
+}
+
+vec3 displacedPos(vec2 worldXZ)
+{
     vec2 uv = worldXZ / uPatchSize;
 
-    float h  = sampleTile(0, uv).x * uHeightScale;
-    float dx = sampleTile(1, uv).x * uChoppy;
-    float dz = sampleTile(2, uv).x * uChoppy;
+    float h  = sampleTileNearest(0, uv).x * uHeightScale;
+    float dx = sampleTileNearest(1, uv).x * uChoppy;
+    float dz = sampleTileNearest(2, uv).x * uChoppy;
 
-    h += swell(worldXZ) * uSwellAmp;
+    SwellOut sw = swellField(worldXZ);
+    h  += sw.h;
+    dx += sw.d.x;
+    dz += sw.d.y;
 
     return vec3(worldXZ.x - dx, h, worldXZ.y - dz);
 }
 
-void main() {
+float saturate(float x){ return clamp(x, 0.0, 1.0); }
+
+void main()
+{
     vec2 worldXZ = aXZ + uWorldOffset;
 
     vec3 P  = displacedPos(worldXZ);
@@ -66,6 +98,24 @@ void main() {
     vec3 Pz = displacedPos(worldXZ + vec2(0.0, stepW));
 
     vec3 N = normalize(cross(Pz - P, Px - P));
+
+    // Jacobian breaking proxy works?? i think :/
+    float dXdx = (Px.x - P.x) / stepW;
+    float dXdz = (Pz.x - P.x) / stepW;
+    float dZdx = (Px.z - P.z) / stepW;
+    float dZdz = (Pz.z - P.z) / stepW;
+
+    float J = dXdx * dZdz - dXdz * dZdx; // small/neg => folding => breaking
+
+    float br = smoothstep(0.22, 0.82, (1.0 - J));
+    br = max(br, smoothstep(0.0, -0.12, J));
+    vBreak = saturate(br);
+
+    float slope = saturate(1.0 - N.y);
+    vCrest = smoothstep(0.18, 0.62, slope);
+
+    float curv = abs(Px.y + Pz.y - 2.0 * P.y) / max(stepW, 1e-3);
+    vCurv = saturate(curv * 0.65); // tune
 
     vWorldPos = P;
     vNormal   = N;
